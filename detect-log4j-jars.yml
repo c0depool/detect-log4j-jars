@@ -1,0 +1,51 @@
+- name: Detecting vulnerable log4j packages
+  vars:
+    #Optionally uncomment add your server details below
+    #servers: 
+    #  - server1.example.com
+    #  - server2.example.com
+    output_dict: {}
+  hosts: "{{ servers }}"
+  tasks:
+    - name: Finding the list of affected log4j jar files
+      find:
+        paths: "{{ item }}"
+        recurse: yes
+        file_type: file
+        #patterns: ['.*log4j(-core)?-2.*[.]jar']
+        patterns: ['.*log4j([a-zA-Z0-9-_.]+)?[-_]+2.*[.]jar']
+        use_regex: yes
+      register: file_list
+      become: yes
+      with_items:
+        - /opt
+        - /etc
+        - /usr/local
+        - /var
+    - name: Parsing through results
+      set_fact: 
+        available_files: "{{ available_files|default([]) + [item.files] }}"
+      when: item.matched != 0
+      with_items: "{{ file_list.results }}"
+    - name: Creating output dictionary
+      block:
+        - name: Making a list of available file paths, skip if no files are available
+          set_fact: 
+            available_file_paths: "{{ available_file_paths|default([]) + [item.path] }}"  
+          with_items: "{{ available_files }}"        
+        - name: Appending hostname to output
+          set_fact: 
+            output_dict: "{{ output_dict|combine( { 'hostname': ansible_hostname } ) }}"
+        - name: Appending paths to output
+          set_fact: 
+            output_dict: "{{ output_dict|combine( { 'paths': available_file_paths } ) }}"
+      when: available_files is defined
+    - name: Print the output
+      debug: var=output_dict  
+    - name: Merging the output from all hosts and copying to {{ ansible_hostname }} at /tmp/log4j_results.json
+      copy:
+        content: "{{ ansible_play_hosts | map('extract', hostvars, 'output_dict') | select |  list }}"
+        dest: /tmp/log4j_results.json
+      when: ansible_play_hosts | map('extract', hostvars, 'output_dict') | select |  list | length != 0
+      run_once: true
+ 
